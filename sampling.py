@@ -16,6 +16,7 @@ def p_sample(model, x, t):
     
     # Prédire le bruit
     eps_theta = model([x, t], training=False)
+    eps_theta = tf.cast(eps_theta, tf.float32)
     
     # Calculer la moyenne
     sqrt_alpha_t = tf.sqrt(alpha_t)
