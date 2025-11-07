@@ -3,16 +3,16 @@ import numpy as np
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 from config import CONFIG
-
+from trainer import betas, alphas, alpha_bars
 @tf.function
 def p_sample(model, x, t):
     """
     Un step de débruitage (enlève progressivement le bruit)
     """
     # Récupérer les paramètres pour ce timestep
-    beta_t = tf.gather(CONFIG['betas'], t)
-    alpha_t = tf.gather(CONFIG['alphas'], t)
-    alpha_bar_t = tf.gather(CONFIG['alpha_bars'], t)
+    beta_t = tf.gather(betas, t)
+    alpha_t = tf.gather(alphas, t)
+    alpha_bar_t = tf.gather(alpha_bars, t)
     
     # Prédire le bruit
     eps_theta = model([x, t], training=False)

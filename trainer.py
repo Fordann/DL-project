@@ -1,18 +1,17 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras import mixed_precision
+from tensorflow.keras.callbacks import EarlyStopping
 from tqdm import tqdm
 from load_dataset import train_generator
 from config import CONFIG
 
-policy = mixed_precision.Policy('mixed_float16')
-mixed_precision.set_global_policy(policy)
-
-betas = tf.constant(
+#noise for each step
+betas = tf.constant( 
     np.linspace(CONFIG['beta_start'], CONFIG['beta_end'], CONFIG['T'], dtype=np.float32)
 )
-alphas = 1.0 - betas
-alpha_bars = tf.math.cumprod(alphas, axis=0)
+alphas = tf.constant(1.0 - betas.numpy()) # quantity of information still in the image
+alpha_bars = tf.constant(np.cumprod(alphas.numpy(), axis=0))
+
 
 def q_sample(x0, t, noise=None):
     if noise is None:
@@ -24,7 +23,12 @@ def q_sample(x0, t, noise=None):
     sqrt_alpha_bar = tf.reshape(sqrt_alpha_bar, (-1, 1, 1, 1))
     sqrt_one_minus = tf.reshape(sqrt_one_minus, (-1, 1, 1, 1))
 
+    sqrt_alpha_bar = tf.cast(sqrt_alpha_bar, x0.dtype)
+    sqrt_one_minus = tf.cast(sqrt_one_minus, x0.dtype)
+    noise = tf.cast(noise, x0.dtype)
+
     return sqrt_alpha_bar * x0 + sqrt_one_minus * noise
+
 
 def timestep_embedding(t, dim):
     half = dim // 2
@@ -32,6 +36,7 @@ def timestep_embedding(t, dim):
     args = tf.cast(tf.expand_dims(t, 1), tf.float32) * tf.expand_dims(freqs, 0)
     emb = tf.concat([tf.sin(args), tf.cos(args)], axis=-1)
     return emb
+
 
 def diffusion_loss(model, x0):
     batch_size = tf.shape(x0)[0]
@@ -48,6 +53,11 @@ def diffusion_loss(model, x0):
 
 
 optimizer = tf.keras.optimizers.AdamW(learning_rate=5e-5)
+callbacks = tf.keras.callbacks.EarlyStopping(
+    monitor = 'loss',
+    patience=5, 
+    restore_best_weights = True,
+)
 
 @tf.function
 def train_step(x, model):
@@ -62,6 +72,8 @@ def train_step(x, model):
 def train_model(model):
     losses_history = []
 
+    callbacks.on_train_begin()
+
     for epoch in range(CONFIG['epochs']):
         epoch_losses = []
         
@@ -69,24 +81,30 @@ def train_model(model):
             range(len(train_generator)), 
             desc=f"Epoch {epoch+1}"
         )
-
+ 
         for batch_idx in progress_bar:
             x_batch = train_generator[batch_idx]
             x_batch = tf.convert_to_tensor(x_batch, dtype=tf.float32)
-
+            
             loss = train_step(x_batch, model)
-            epoch_losses.append(loss.numpy())
 
+            epoch_losses.append(loss.numpy())
             progress_bar.set_postfix({
                 'loss': f'{loss.numpy():.4f}',
                 'lr': f'{optimizer.learning_rate.numpy():.2e}'
             })
 
+        callbacks.on_train_end(logs=losses_history)
         avg_loss = np.mean(epoch_losses)
         losses_history.append(avg_loss)
         
         print(f"\n Epoch {epoch+1} - Loss: {avg_loss:.4f}")
         train_generator.on_epoch_end()
+        should_stop = callbacks.on_epoch_end(epoch, avg_loss, model, optimizer)
 
+        if should_stop:
+            break
+    
+    callbacks.on_train_end(model)
     model.save('diffusion_model_complete.keras')
     return losses_history
