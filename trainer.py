@@ -53,11 +53,30 @@ def diffusion_loss(model, x0):
 
 
 optimizer = tf.keras.optimizers.AdamW(learning_rate=5e-5)
-callbacks = tf.keras.callbacks.EarlyStopping(
-    monitor = 'loss',
-    patience=5, 
-    restore_best_weights = True,
-)
+
+class CustomEarlyStopping:
+    def __init__(self, patience=5):
+        self.patience = patience
+        self.best_loss = float('inf')
+        self.wait = 0
+        self.best_weights = None
+    
+    def on_epoch_end(self, epoch, loss, model):
+        if loss < self.best_loss:
+            self.best_loss = loss
+            self.wait = 0
+            self.best_weights = model.get_weights()
+            return False
+        else:
+            self.wait += 1
+            if self.wait >= self.patience:
+                print(f"\nEarly stopping triggered after {epoch+1} epochs")
+                if self.best_weights is not None:
+                    model.set_weights(self.best_weights)
+                return True
+        return False
+
+early_stopping = CustomEarlyStopping(patience=5)
 
 @tf.function
 def train_step(x, model):
@@ -71,8 +90,6 @@ def train_step(x, model):
 
 def train_model(model):
     losses_history = []
-
-    callbacks.on_train_begin()
 
     for epoch in range(CONFIG['epochs']):
         epoch_losses = []
@@ -94,17 +111,14 @@ def train_model(model):
                 'lr': f'{optimizer.learning_rate.numpy():.2e}'
             })
 
-        callbacks.on_train_end(logs=losses_history)
         avg_loss = np.mean(epoch_losses)
         losses_history.append(avg_loss)
         
         print(f"\n Epoch {epoch+1} - Loss: {avg_loss:.4f}")
         train_generator.on_epoch_end()
-        should_stop = callbacks.on_epoch_end(epoch, avg_loss, model, optimizer)
-
+        should_stop = early_stopping.on_epoch_end(epoch, avg_loss, model)
         if should_stop:
             break
     
-    callbacks.on_train_end(model)
     model.save('diffusion_model_complete.keras')
     return losses_history
