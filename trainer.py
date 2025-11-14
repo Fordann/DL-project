@@ -1,6 +1,5 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.keras.callbacks import EarlyStopping
 from tqdm import tqdm
 from load_dataset import train_generator
 from config import CONFIG
