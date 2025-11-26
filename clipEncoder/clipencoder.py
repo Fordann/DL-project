@@ -3,8 +3,16 @@
 import os
 import glob
 import numpy as np
-import torch
-from transformers import CLIPTokenizer, CLIPTextModel
+
+# Try sentence-transformers first (no PyTorch dependency)
+try:
+    from sentence_transformers import SentenceTransformer
+    USE_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    USE_SENTENCE_TRANSFORMERS = False
+    # Fallback to transformers (may require PyTorch)
+    from transformers import CLIPTokenizer, CLIPTextModel
+    import torch
 
 # --------- Config adaptée à ton projet ---------
 MODEL_NAME = "openai/clip-vit-base-patch32"
@@ -22,9 +30,14 @@ OUT_IMG_LIST_PATH = os.path.join(OUT_DIR, "clip_image_paths.txt")
 
 
 def main():
-    print(f"Loading CLIP tokenizer & text model: {MODEL_NAME}")
-    tokenizer = CLIPTokenizer.from_pretrained(MODEL_NAME)
-    text_model = CLIPTextModel.from_pretrained(MODEL_NAME)
+    if USE_SENTENCE_TRANSFORMERS:
+        print(f"Loading CLIP model using sentence-transformers (no PyTorch needed)")
+        model = SentenceTransformer('clip-ViT-B-32')
+    else:
+        print(f"Loading CLIP tokenizer & text model: {MODEL_NAME}")
+        print("WARNING: Using PyTorch backend. Install sentence-transformers to avoid PyTorch dependency.")
+        tokenizer = CLIPTokenizer.from_pretrained(MODEL_NAME)
+        text_model = CLIPTextModel.from_pretrained(MODEL_NAME)
 
     # Lister les images .png
     img_paths = sorted(glob.glob(os.path.join(IMAGES_DIR, "*.png")))
@@ -61,23 +74,28 @@ def main():
 
     print(f"Will encode {len(captions)} (image, caption) pairs.")
 
-    text_model.eval()
-    all_embs = []
-
-    with torch.no_grad():
-        for i in range(0, len(captions), BATCH_SIZE):
-            batch = captions[i:i + BATCH_SIZE]
-
-            inputs = tokenizer(
-                batch,
-                padding=True,
-                truncation=True,
-                return_tensors="pt"
-            )
-
-            outputs = text_model(**inputs)
-            pooled = outputs.pooler_output    # (B, hidden_size)
-            all_embs.append(pooled.cpu().numpy())
+    if USE_SENTENCE_TRANSFORMERS:
+        # Use sentence-transformers (no PyTorch needed)
+        print("Encoding with sentence-transformers...")
+        embeddings = model.encode(captions, batch_size=BATCH_SIZE, show_progress_bar=True)
+        all_embs = [embeddings]
+    else:
+        # PyTorch fallback (only if sentence-transformers not available)
+        print("Encoding with PyTorch CLIP...")
+        text_model.eval()
+        all_embs = []
+        with torch.no_grad():
+            for i in range(0, len(captions), BATCH_SIZE):
+                batch = captions[i:i + BATCH_SIZE]
+                inputs = tokenizer(
+                    batch,
+                    padding=True,
+                    truncation=True,
+                    return_tensors="pt"
+                )
+                outputs = text_model(**inputs)
+                pooled = outputs.pooler_output
+                all_embs.append(pooled.cpu().numpy())
 
     embs = np.concatenate(all_embs, axis=0)
     np.save(OUT_EMB_PATH, embs)

@@ -9,8 +9,16 @@ import argparse
 
 import cv2
 import tensorflow as tf
-import torch
-from transformers import CLIPTokenizer, CLIPTextModel
+
+# Try sentence-transformers first (no PyTorch dependency)
+try:
+    from sentence_transformers import SentenceTransformer
+    USE_SENTENCE_TRANSFORMERS = True
+except ImportError:
+    USE_SENTENCE_TRANSFORMERS = False
+    # Fallback to transformers (may require PyTorch)
+    from transformers import CLIPTokenizer, CLIPTextModel
+    import torch
 
 from config import CONFIG
 from gpu_setup import setup_tensorflow_gpu
@@ -22,28 +30,31 @@ from sampling import generate_single_image, visualize_diffusion_process
 # ----------------------------------------------------
 # CLIP text encoder helper (for inference / sampling)
 # ----------------------------------------------------
+_CLIP_SENTENCE_MODEL = None
 _CLIP_TOKENIZER = None
 _CLIP_TEXT_MODEL = None
-_CLIP_DEVICE = "cpu"
 
 
 def load_clip_text_model(model_name: str = "openai/clip-vit-base-patch32"):
     """
-    Lazy-load the CLIP tokenizer and text model (for prompts at inference time).
+    Lazy-load the CLIP text model (for prompts at inference time).
+    Uses sentence-transformers to avoid PyTorch dependency.
     """
-    global _CLIP_TOKENIZER, _CLIP_TEXT_MODEL, _CLIP_DEVICE
+    global _CLIP_SENTENCE_MODEL, _CLIP_TOKENIZER, _CLIP_TEXT_MODEL
 
-    if _CLIP_TOKENIZER is not None and _CLIP_TEXT_MODEL is not None:
+    if USE_SENTENCE_TRANSFORMERS:
+        if _CLIP_SENTENCE_MODEL is not None:
+            return _CLIP_SENTENCE_MODEL
+        print("[CLIP] Loading sentence-transformers model (no PyTorch needed)")
+        _CLIP_SENTENCE_MODEL = SentenceTransformer('clip-ViT-B-32')
+        return _CLIP_SENTENCE_MODEL
+    else:
+        if _CLIP_TOKENIZER is not None and _CLIP_TEXT_MODEL is not None:
+            return _CLIP_TOKENIZER, _CLIP_TEXT_MODEL
+        print("[CLIP] Loading PyTorch CLIP model (fallback - install sentence-transformers to avoid PyTorch)")
+        _CLIP_TOKENIZER = CLIPTokenizer.from_pretrained(model_name)
+        _CLIP_TEXT_MODEL = CLIPTextModel.from_pretrained(model_name)
         return _CLIP_TOKENIZER, _CLIP_TEXT_MODEL
-
-    print(f"[CLIP] Loading text model: {model_name}")
-    _CLIP_TOKENIZER = CLIPTokenizer.from_pretrained(model_name)
-    _CLIP_TEXT_MODEL = CLIPTextModel.from_pretrained(model_name)
-
-    _CLIP_DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-    _CLIP_TEXT_MODEL.to(_CLIP_DEVICE)
-
-    return _CLIP_TOKENIZER, _CLIP_TEXT_MODEL
 
 
 def encode_prompt_to_tf(prompt: str, model_name: str = "openai/clip-vit-base-patch32") -> tf.Tensor:
@@ -53,23 +64,32 @@ def encode_prompt_to_tf(prompt: str, model_name: str = "openai/clip-vit-base-pat
 
     This is used at inference time to condition the diffusion model.
     """
-    tokenizer, text_model = load_clip_text_model(model_name)
-
-    text_model.eval()
-    with torch.no_grad():
-        inputs = tokenizer(
-            [prompt],
-            padding=True,
-            truncation=True,
-            return_tensors="pt"
-        ).to(_CLIP_DEVICE)
-
-        outputs = text_model(**inputs)
-        pooled = outputs.pooler_output  # shape: (1, text_dim), e.g. (1, 512)
-
-    emb_np = pooled.detach().cpu().numpy().astype("float32")
-    text_emb_tf = tf.convert_to_tensor(emb_np, dtype=tf.float32)  # (1, text_dim)
-    return text_emb_tf
+    model_or_tuple = load_clip_text_model(model_name)
+    
+    if USE_SENTENCE_TRANSFORMERS:
+        # sentence-transformers backend (no PyTorch)
+        emb_np = model_or_tuple.encode([prompt], show_progress_bar=False)
+        text_emb_tf = tf.convert_to_tensor(emb_np, dtype=tf.float32)  # (1, text_dim)
+        return text_emb_tf
+    else:
+        # PyTorch fallback
+        tokenizer, text_model = model_or_tuple
+        text_model.eval()
+        with torch.no_grad():
+            inputs = tokenizer(
+                [prompt],
+                padding=True,
+                truncation=True,
+                return_tensors="pt"
+            )
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            inputs = {k: v.to(device) for k, v in inputs.items()}
+            text_model = text_model.to(device)
+            outputs = text_model(**inputs)
+            pooled = outputs.pooler_output
+            emb_np = pooled.detach().cpu().numpy().astype("float32")
+            text_emb_tf = tf.convert_to_tensor(emb_np, dtype=tf.float32)
+            return text_emb_tf
 
 
 # ----------------------------------------------------
