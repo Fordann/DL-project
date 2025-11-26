@@ -1,36 +1,53 @@
+# Core ML/DL libraries
+tensorflow
+keras
+numpy
+
+# CLIP and text encoding (no PyTorch dependency)
+sentence-transformers
+transformers
+
+# Image processing
+opencv-python
+pillow
+
+# Utilities
+tqdm
+tensorboard
+tensorboard-data-server
+
+# TensorFlow dependencies
 absl-py
 astunparse
-certifi
-charset-normalizer
-contourpy
-cycler
 flatbuffers
-fonttools
 gast
 google-pasta
 grpcio
 h5py
+libclang
+ml_dtypes
+namex
+opt_einsum
+optree
+protobuf
+termcolor
+wrapt
+
+# Other dependencies
+certifi
+charset-normalizer
+contourpy
+cycler
+fonttools
 idna
 kagglehub
-keras
 kiwisolver
-libclang
 Markdown
 markdown-it-py
 MarkupSafe
 matplotlib
 mdurl
-ml_dtypes
-namex
-numpy
-opt_einsum
-optree
 packaging
-pillow
-protobuf
-torch
-transformers
-opencv-python
 Pygments
 pyparsing
 python-dateutil
@@ -39,13 +56,7 @@ requests
 rich
 setuptools
 six
-tensorboard
-tensorboard-data-server
-tensorflow
-termcolor
-tqdm
 typing_extensions
 urllib3
 Werkzeug
 wheel
-wrapt
